@@ -60,6 +60,8 @@ void AriaViewer::init() {
   pangolin::GetBoundWindow()->RemoveCurrent();
 }
 
+//TESTING OLIVIA
+
 void AriaViewer::run() {
   pangolin::BindToContext(windowName_);
   // Main loop
