@@ -1,0 +1,27 @@
+---
+sidebar_position: 31
+title: Export VRS to WAV (Python)
+---
+
+# Export a VRS file to WAV
+
+The `vrs_to_wav` script enables you to create a WAV audio file from a Project Aria VRS recording.
+By default, it extracts the audio stream from the VRS file and saves it as a WAV file.
+You can also use the `--long_wav` flag to export a long WAV file, combining all audio segments into a continuous file.
+
+:::info vrs_to_wav generates an audio export
+
+This script provides an audio export suitable for various applications, including analysis and playback.
+:::
+
+## Install dependencies
+
+```bash
+pip install projectaria_tools wave
+```
+
+## Usage
+
+```bash
+vrs_to_wav --vrs "projectaria_tools/data/mps_sample/sample.vrs" --output_wav "sample.wav" --long_wav
+```

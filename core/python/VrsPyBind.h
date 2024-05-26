@@ -21,6 +21,7 @@
 
 #include <vrs/utils/AudioTrackExtractor.h>
 #include <vrs/utils/FilteredFileReader.h>
+#include <ExtendedAudioTrackExtractor.h
 
 namespace projectaria::tools::vrspybind {
 
@@ -31,16 +32,21 @@ namespace {
 inline void declareVrsAudioToWav(py::module& m) {
   m.def(
       "extract_audio_track",
-      [](const std::string& vrsFilePath, const std::string& wavFilePath) {
+      [](const std::string& vrsFilePath, const std::string& wavFilePath, bool wav64 = false) {
         ::vrs::utils::FilteredFileReader filteredReader;
         // Initialize VRS Reader and filters
         filteredReader.setSource(vrsFilePath);
         filteredReader.openFile();
         filteredReader.applyFilters({});
 
-        return vrs::utils::extractAudioTrack(filteredReader, wavFilePath);
+        if (wav64) {
+          projectaria::tools::data_provider::ExtendedAudioTrackExtractor extractor(wavFilePath, false, wav64);
+          return extractor.extract(filteredReader);
+        } else {
+          return vrs::utils::extractAudioTrack(filteredReader, wavFilePath);
+        }
       },
-      "Extract the audio stream of a VRS file into a WAV file");
+      "Extract the audio stream of a VRS file into a WAV file or WAV64");
 }
 
 } // namespace
