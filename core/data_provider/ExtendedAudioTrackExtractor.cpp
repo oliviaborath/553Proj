@@ -5,6 +5,8 @@
 #include <vrs/RecordReaders.h>
 #include <vrs/helpers/Endian.h>
 #include <vrs/helpers/FileMacros.h>
+#include <vrs/helpers/Rapidjson.hpp>
+#include <vrs/helpers/Strings.h>
 #include <vrs/os/Utils.h>
 #include <fmt/format.h>
 
@@ -13,21 +15,155 @@ using namespace vrs;
 using namespace projectaria::tools::data_provider;
 
 namespace {
+
 template <class T>
 inline void writeHeader(void* p, const T t) {
   memcpy(p, &t, sizeof(T));
 }
+} // namespace
 
 constexpr uint32_t kWavHeaderSize = 44;
-constexpr uint32_t kWave64HeaderSize = 64; // Example size, you will need to define the correct header size
+constexpr uint32_t kWave64HeaderSize = 64; // Adjusted for WAV64
 
-} // namespace
+namespace projectaria::tools::data_provider {
+
+ExtendedAudioTrackExtractor::ExtendedAudioTrackExtractor(const string& wavFilePath, StreamId id, uint32_t& counter, bool wav64, bool& stop)
+    : wavFilePath_{wavFilePath}, id_{id}, cumulativeOutputAudioFileCount_{counter}, fileAudioSpec_{AudioFormat::UNDEFINED}, wav64_{wav64}, stop_{stop} {}
+
+ExtendedAudioTrackExtractor::~ExtendedAudioTrackExtractor() {
+  closeWavFile(currentWavFile_);
+}
+
+bool ExtendedAudioTrackExtractor::onAudioRead(const vrs::CurrentRecord& record, size_t, const vrs::ContentBlock& audioBlock) {
+  audio_.resize(audioBlock.getBlockSize());
+  int readStatus = record.reader->read(audio_);
+  if (readStatus != 0) {
+    cout << "Failed to read audio data." << endl;
+    return false;
+  }
+
+  const AudioContentBlockSpec& audioBlockSpec = audioBlock.audio();
+  if (audioBlockSpec.getAudioFormat() != AudioFormat::PCM) {
+    cout << "Skipping non-PCM audio block" << endl;
+    return true;
+  }
+
+  const int64_t kMaxWavFileSize = wav64_ ? (1LL << 40) : (1LL << 32); // Adjust for WAV64
+  if (!fileAudioSpec_.isCompatibleWith(audioBlockSpec) || currentWavFile_.getPos() + audio_.size() >= kMaxWavFileSize) {
+    closeWavFile(currentWavFile_);
+
+    string path = fmt::format("{}/{}-{:04}-{:.3f}.{}", wavFilePath_, id_.getNumericName(), streamOutputAudioFileCount_, record.timestamp, wav64_ ? "w64" : "wav");
+    cout << "Writing " << path << endl;
+    int status = createWavFile(path, audioBlockSpec, currentWavFile_, wav64_);
+    if (status != 0) {
+      cout << "Can't create wav file: " << status << endl;
+      return false;
+    }
+
+    fileAudioSpec_ = audioBlockSpec;
+    cumulativeOutputAudioFileCount_++;
+    streamOutputAudioFileCount_++;
+    segmentStartTimestamp_ = record.timestamp;
+    segmentSamplesCount_ = 0;
+  }
+
+  int status = writeWavAudioData(currentWavFile_, audioBlockSpec, audio_);
+  if (status != 0) {
+    cout << "Can't write to wav file: " << status << endl;
+    return false;
+  }
+
+  // Time/sample counting validation
+  if (segmentSamplesCount_ > 0) {
+    const double kMaxJitter = 0.01;
+    double actualTime = record.timestamp - segmentStartTimestamp_;
+    double expectedTime = static_cast<double>(segmentSamplesCount_) / fileAudioSpec_.getSampleRate();
+    if (actualTime - expectedTime > kMaxJitter) {
+      cout << "Audio block at " << actualTime << " ms late." << endl;
+    } else if (expectedTime - actualTime > kMaxJitter) {
+      cout << "Audio block at " << expectedTime << " ms, early." << endl;
+    }
+  } else {
+    segmentStartTimestamp_ = record.timestamp;
+  }
+  segmentSamplesCount_ += audioBlock.audio().getSampleCount();
+
+  return true;
+}
+
+bool ExtendedAudioTrackExtractor::onUnsupportedBlock(const vrs::CurrentRecord& record, size_t, const vrs::ContentBlock& cb) {
+  if (cb.getContentType() == ContentType::AUDIO) {
+      cout << "Audio block skipped for " << record.streamId.getName() << ", content: " << cb.asString() << endl;
+  }
+  return false;
+}
+
+std::string ExtendedAudioTrackExtractor::getSummary(
+    const std::string& vrsFilePath,
+    vrs::StreamId streamId,
+    const std::string& streamFlavor,
+    double firstImageTime,
+    double lastImageTime) {
+  JDocument doc;
+  JsonWrapper json{doc};
+  closeWavFile(currentWavFile_);
+  json.addMember("input", vrsFilePath);
+  json.addMember("output", wavFilePath_);
+  json.addMember("stream_id", streamId.getNumericName());
+  if (!streamFlavor.empty()) {
+    json.addMember("stream_flavor", streamFlavor);
+  }
+  if (firstImageTime >= 0) {
+    json.addMember("first_image_timestamp", firstImageTime);
+  }
+  if (lastImageTime >= 0) {
+    json.addMember("last_image_timestamp", lastImageTime);
+  }
+  json.addMember("status", status_.empty() ? "success" : status_);
+  if (status_.empty()) {
+    if (firstAudioRecordTimestamp_ <= lastAudioRecordTimestamp_) {
+      json.addMember("first_audio_record_timestamp", firstAudioRecordTimestamp_);
+      json.addMember("last_audio_record_timestamp", lastAudioRecordTimestamp_);
+    }
+    if (firstAudioRecordDuration_ <= lastAudioRecordDuration_) {
+      json.addMember("first_audio_record_duration", firstAudioRecordDuration_);
+      json.addMember("last_audio_record_duration", lastAudioRecordDuration_);
+    }
+    if (minMidAudioRecordDuration_ <= maxMidAudioRecordDuration_) {
+      json.addMember("min_mid_audio_record_duration", minMidAudioRecordDuration_);
+      json.addMember("max_mid_audio_record_duration", maxMidAudioRecordDuration_);
+    }
+    if (minAudioRecordGap_ <= maxAudioRecordGap_) {
+      json.addMember("min_audio_record_gap", minAudioRecordGap_);
+      json.addMember("max_audio_record_gap_", maxAudioRecordGap_);
+    }
+    double totalDuration = 0;
+    if (audioSampleCount_ > 0 && fileAudioSpec_.getSampleRate() > 0) {
+      totalDuration = audioSampleCount_ * 1. / fileAudioSpec_.getSampleRate();
+    }
+    json.addMember("total_audio_duration", totalDuration);
+    json.addMember("audio_record_miss_count", audioRecordMissCount_);
+    double firstSampleRatio =
+        static_cast<double>(firstSampleTimestampTotal_) / pastLastSampleTimestampTotal_;
+    json.addMember("first_sample_timestamp_ratio", firstSampleRatio);
+  }
+  if (!firstAudioBlockSpec_.empty()) {
+    json.addMember("audio_channel_count", fileAudioSpec_.getChannelCount());
+    json.addMember("audio_sample_rate", fileAudioSpec_.getSampleRate());
+    json.addMember("audio_sample_format", fileAudioSpec_.getSampleFormatAsString());
+    json.addMember("first_audio_block_spec", firstAudioBlockSpec_);
+  }
+  return jDocumentToJsonStringPretty(doc);
+}
+
 
 int ExtendedAudioTrackExtractor::createWavFile(const std::string& wavFilePath, const vrs::AudioContentBlockSpec& audioBlock, vrs::DiskFile& outFile, bool wav64) {
   IF_ERROR_RETURN(outFile.create(wavFilePath));
 
   array<uint8_t, kWavHeaderSize> fileHeader{};
   if (wav64) {
+    // Define Wave64 header
+    // Example Wave64 header setup
     writeHeader(fileHeader.data() + 0, htobe32(0x52494646)); // 'RIFF' in big endian
     writeHeader(fileHeader.data() + 4, htole32(0)); // Placeholder for size
     writeHeader(fileHeader.data() + 8, htobe32(0x57415645)); // 'WAVE' in big endian
@@ -93,123 +229,73 @@ int ExtendedAudioTrackExtractor::closeWavFile(vrs::DiskFile& inFile) {
   return inFile.close();
 }
 
-ExtendedAudioTrackExtractor::ExtendedAudioTrackExtractor(const string& folderPath, StreamId id, uint32_t& counter, bool wav64)
-    : folderPath_{folderPath}, id_{id}, cumulativeOutputAudioFileCount_{counter}, currentAudioContentBlockSpec_{AudioFormat::UNDEFINED}, wav64_{wav64} {}
-
-ExtendedAudioTrackExtractor::~ExtendedAudioTrackExtractor() {
-  closeWavFile(currentWavFile_);
-}
-
-bool ExtendedAudioTrackExtractor::onAudioRead(const vrs::CurrentRecord& record, size_t, const vrs::ContentBlock& audioBlock) {
-  audio_.resize(audioBlock.getBlockSize());
-  int readStatus = record.reader->read(audio_);
-  if (readStatus != 0) {
-    cout << "Failed to read audio data." << endl;
-    return false;
-  }
-
-  const AudioContentBlockSpec& audioBlockSpec = audioBlock.audio();
-  if (audioBlockSpec.getAudioFormat() != AudioFormat::PCM) {
-    cout << "Skipping non-PCM audio block" << endl;
-    return true;
-  }
-
-  const int64_t kMaxWavFileSize = wav64_ ? (1LL << 40) : (1LL << 32); // Adjust for WAV64
-  if (!currentAudioContentBlockSpec_.isCompatibleWith(audioBlockSpec) || currentWavFile_.getPos() + audio_.size() >= kMaxWavFileSize) {
-    closeWavFile(currentWavFile_);
-
-    string path = fmt::format("{}/{}-{:04}-{:.3f}.{}", folderPath_, id_.getNumericName(), streamOutputAudioFileCount_, record.timestamp, wav64_ ? "w64" : "wav");
-    cout << "Writing " << path << endl;
-    int status = createWavFile(path, audioBlockSpec, currentWavFile_, wav64_);
-    if (status != 0) {
-      cout << "Failed to create wav file: " << path << endl;
-      return false;
-    }
-
-    currentAudioContentBlockSpec_ = audioBlockSpec;
-    cumulativeOutputAudioFileCount_++;
-    streamOutputAudioFileCount_++;
-    segmentStartTimestamp_ = record.timestamp;
-    segmentSamplesCount_ = 0;
-  }
-
-  int status = writeWavAudioData(currentWavFile_, audioBlockSpec, audio_);
-  if (status != 0) {
-    cout << "Failed to write audio data." << endl;
-    return false;
-  }
-
-  segmentSamplesCount_ += audioBlock.audio().getSampleCount();
-
-  return true;
-}
-
-bool ExtendedAudioTrackExtractor::onUnsupportedBlock(const vrs::CurrentRecord& record, size_t, const vrs::ContentBlock& cb) {
-  if (cb.getContentType() == ContentType::AUDIO) {
-    cout << "Audio block skipped for " << record.streamId.getName() << ", content: " << cb.asString() << endl;
-  }
+bool ExtendedAudioTrackExtractor::stop(const string& reason) {
+  status_ = reason;
+  stop_ = true;
   return false;
 }
 
-string extractAudioTrack(FilteredFileReader& filteredReader, const std::string& filePath, bool wav64) {
-  const string wavFilePath = filePath + (helpers::endsWith(filePath, ".wav") ? "" : ".wav");
+string extractAudioTrack(vrs::utils::FilteredFileReader& filteredReader, const string& filePath, bool wav64) {
+  const string wavFilePath = filePath + (helpers::endsWith(filePath, wav64 ? ".w64" : ".wav") ? "" : (wav64 ? ".w64" : ".wav"));
   const string jsonFilePath = wavFilePath + ".json";
   JDocument doc;
   JsonWrapper json{doc};
   string folderPath = os::getParentFolder(wavFilePath);
   if (folderPath.length() > 0) {
-    if (!os::pathExists(folderPath)) {
-      int status = os::makeDirectories(folderPath);
-      if (status != 0) {
-        json.addMember("status", "No audio track found.");
-        return vrs::helpers::failure(doc, jsonFilePath);
+      if (!os::pathExists(folderPath)) {
+          int status = os::makeDirectories(folderPath);
+          if (status != 0) {
+              json.addMember("status", "No audio track found.");
+              return jDocumentToJsonStringPretty(doc);
+          }
       }
-    }
-    if (!os::isDir(folderPath)) {
-      json.addMember("status", fmt::format("Can't write output files at {}, because something is there...", folderPath));
-      return vrs::helpers::failure(doc, jsonFilePath);
-    }
+      if (!os::isDir(folderPath)) {
+          json.addMember(
+              "status",
+              fmt::format("Can't write output files at {}, because something is there...", folderPath));
+          return jDocumentToJsonStringPretty(doc);
+      }
   }
   bool stop = false;
+  uint32_t counter = 0;
   unique_ptr<ExtendedAudioTrackExtractor> audioExtractor;
   StreamId streamId;
   for (auto id : filteredReader.filter.streams) {
-    if (filteredReader.reader.mightContainAudio(id)) {
-      if (audioExtractor) {
-        json.addMember("status", "Multiple audio tracks found.");
-        return vrs::helpers::failure(doc, jsonFilePath);
+      if (filteredReader.reader.mightContainAudio(id)) {
+          if (audioExtractor) {
+              json.addMember("status", "Multiple audio tracks found.");
+              return jDocumentToJsonStringPretty(doc);
+          }
+          streamId = id;
+          audioExtractor = make_unique<ExtendedAudioTrackExtractor>(wavFilePath, streamId, counter, stop, wav64);
+          filteredReader.reader.setStreamPlayer(id, audioExtractor.get());
       }
-      streamId = id;
-      audioExtractor = make_unique<ExtendedAudioTrackExtractor>(wavFilePath, stop, wav64);
-      filteredReader.reader.setStreamPlayer(id, audioExtractor.get());
-    }
   }
   if (!audioExtractor) {
-    json.addMember("status", "No audio track found.");
-    return vrs::helpers::failure(doc, jsonFilePath);
+      json.addMember("status", "No audio track found.");
+      return jDocumentToJsonStringPretty(doc);
   }
   filteredReader.iterateSafe();
   double firstImageTime = -1;
   double lastImageTime = -1;
   for (auto id : filteredReader.filter.streams) {
-    if (filteredReader.reader.mightContainImages(id)) {
-      auto record = filteredReader.reader.getRecord(id, Record::Type::DATA, 0);
-      if (record != nullptr && (firstImageTime < 0 || record->timestamp < firstImageTime)) {
-        firstImageTime = record->timestamp;
+      if (filteredReader.reader.mightContainImages(id)) {
+          auto record = filteredReader.reader.getRecord(id, Record::Type::DATA, 0);
+          if (record != nullptr && (firstImageTime < 0 || record->timestamp < firstImageTime)) {
+              firstImageTime = record->timestamp;
+          }
+          record = filteredReader.reader.getLastRecord(id, Record::Type::DATA);
+          if (record != nullptr && (lastImageTime < 0 || record->timestamp > lastImageTime)) {
+              lastImageTime = record->timestamp;
+          }
       }
-      record = filteredReader.reader.getLastRecord(id, Record::Type::DATA);
-      if (record != nullptr && (lastImageTime < 0 || record->timestamp > lastImageTime)) {
-        lastImageTime = record->timestamp;
-      }
-    }
   }
-  return vrs::helpers::writeJson(
-      jsonFilePath,
-      audioExtractor->getSummary(
-          filteredReader.getPathOrUri(),
-          streamId,
-          filteredReader.reader.getFlavor(streamId),
-          firstImageTime,
-          lastImageTime),
-      true);
+  return audioExtractor->getSummary(
+      filteredReader.getPathOrUri(),
+      streamId,
+      filteredReader.reader.getFlavor(streamId),
+      firstImageTime,
+      lastImageTime);
 }
+
+} // namespace projectaria::tools::data_provider

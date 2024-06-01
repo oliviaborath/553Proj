@@ -17,7 +17,6 @@
 #pragma once
 
 #include <data_provider/VrsDataProvider.h>
-#include <data_provider/ExtendedAudioTrackExtractor.h>
 
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
