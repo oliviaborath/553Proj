@@ -147,6 +147,9 @@ def main():
                 "scipy",
                 ## Required for vrs_to_mp4
                 "moviepy",
+                ## Required for vrs_to_wav
+                "wave",
+                "pydub",
             ]
         },
         entry_points={
@@ -162,6 +165,7 @@ def main():
                 "viewer_projects_ase = projectaria_tools.utils.viewer_projects_ase:main",
                 "viewer_projects_aea = projectaria_tools.utils.viewer_projects_aea:main",
                 "vrs_to_mp4 = projectaria_tools.utils.vrs_to_mp4:main",
+                "vrs_to_wav = projectaria_tools.utils.vrs_to_wav:main",
                 "run_vrs_health_check = projectaria_tools.utils.run_vrs_health_check:main",
             ]
         },

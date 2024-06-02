@@ -21,6 +21,7 @@
 #include <string>
 
 #include <calibration/DeviceCalibration.h>
+#include <data_provider/ExtendedAudioTrackExtractor.h>
 #include <data_provider/RecordReaderInterface.h>
 #include <data_provider/SensorConfiguration.h>
 #include <data_provider/SensorDataSequence.h>
