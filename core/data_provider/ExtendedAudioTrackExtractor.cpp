@@ -27,14 +27,17 @@ constexpr uint32_t kWave64HeaderSize = 64; // Adjusted for WAV64
 
 namespace projectaria::tools::data_provider {
 
-ExtendedAudioTrackExtractor::ExtendedAudioTrackExtractor(const string& wavFilePath, StreamId id, uint32_t& counter, bool wav64, bool& stop)
-    : wavFilePath_{wavFilePath}, id_{id}, cumulativeOutputAudioFileCount_{counter}, fileAudioSpec_{AudioFormat::UNDEFINED}, wav64_{wav64}, stop_{stop} {}
+ExtendedAudioTrackExtractor::ExtendedAudioTrackExtractor(const string& wavFilePath, StreamId id, uint32_t& counter, bool& stop)
+    : wavFilePath_{wavFilePath}, id_{id}, cumulativeOutputAudioFileCount_{counter}, fileAudioSpec_{AudioFormat::UNDEFINED}, stop_{stop} {}
 
 ExtendedAudioTrackExtractor::~ExtendedAudioTrackExtractor() {
   closeWavFile(currentWavFile_);
 }
 
-bool ExtendedAudioTrackExtractor::onAudioRead(const vrs::CurrentRecord& record, size_t, const vrs::ContentBlock& audioBlock) {
+bool ExtendedAudioTrackExtractor::onAudioRead(
+    const vrs::CurrentRecord& record, 
+    size_t, 
+    const vrs::ContentBlock& audioBlock) {
   audio_.resize(audioBlock.getBlockSize());
   int readStatus = record.reader->read(audio_);
   if (readStatus != 0) {
@@ -48,13 +51,13 @@ bool ExtendedAudioTrackExtractor::onAudioRead(const vrs::CurrentRecord& record, 
     return true;
   }
 
-  const int64_t kMaxWavFileSize = wav64_ ? (1LL << 40) : (1LL << 32); // Adjust for WAV64
+  const int64_t kMaxWavFileSize = 1LL << 40; // Adjusted for WAV64
   if (!fileAudioSpec_.isCompatibleWith(audioBlockSpec) || currentWavFile_.getPos() + audio_.size() >= kMaxWavFileSize) {
     closeWavFile(currentWavFile_);
 
-    string path = fmt::format("{}/{}-{:04}-{:.3f}.{}", wavFilePath_, id_.getNumericName(), streamOutputAudioFileCount_, record.timestamp, wav64_ ? "w64" : "wav");
-    cout << "Writing " << path << endl;
-    int status = createWavFile(path, audioBlockSpec, currentWavFile_, wav64_);
+    // string path = fmt::format("{}/{}-{:04}-{:.3f}.{}", wavFilePath_, id_.getNumericName(), streamOutputAudioFileCount_, record.timestamp, "w64");
+    cout << "Writing " << wavFilePath_ << endl;
+    int status = createWavFile(wavFilePath_, audioBlockSpec, currentWavFile_);
     if (status != 0) {
       cout << "Can't create wav file: " << status << endl;
       return false;
@@ -157,43 +160,35 @@ std::string ExtendedAudioTrackExtractor::getSummary(
 }
 
 
-int ExtendedAudioTrackExtractor::createWavFile(const std::string& wavFilePath, const vrs::AudioContentBlockSpec& audioBlock, vrs::DiskFile& outFile, bool wav64) {
+int ExtendedAudioTrackExtractor::createWavFile(const std::string& wavFilePath, const vrs::AudioContentBlockSpec& audioBlock, vrs::DiskFile& outFile) {
   IF_ERROR_RETURN(outFile.create(wavFilePath));
 
   array<uint8_t, kWavHeaderSize> fileHeader{};
-  if (wav64) {
-    // Define Wave64 header
-    // Example Wave64 header setup
-    writeHeader(fileHeader.data() + 0, htobe32(0x52494646)); // 'RIFF' in big endian
-    writeHeader(fileHeader.data() + 4, htole32(0)); // Placeholder for size
-    writeHeader(fileHeader.data() + 8, htobe32(0x57415645)); // 'WAVE' in big endian
-    // Add necessary headers for Wave64 format
-  } else {
-    writeHeader(fileHeader.data() + 0, htobe32(0x52494646)); // 'RIFF' in big endian
-    writeHeader(fileHeader.data() + 4, htole32(0)); // Placeholder for size
-    writeHeader(fileHeader.data() + 8, htobe32(0x57415645)); // 'WAVE' in big endian
-    writeHeader(fileHeader.data() + 12, htobe32(0x666d7420)); // 'fmt' in big endian
-    writeHeader(fileHeader.data() + 16, htole32(16)); // PCM header size
 
-    uint16_t format = 1; // PCM format
-    if (audioBlock.isIEEEFloat()) {
-      format = 3;
-    } else if (audioBlock.getSampleFormat() == AudioSampleFormat::A_LAW) {
-      format = 6;
-    } else if (audioBlock.getSampleFormat() == AudioSampleFormat::MU_LAW) {
-      format = 7;
-    }
+  writeHeader(fileHeader.data() + 0, htobe32(0x52494646)); // 'RIFF' in big endian
+  writeHeader(fileHeader.data() + 4, htole32(0)); // Placeholder for size
+  writeHeader(fileHeader.data() + 8, htobe32(0x57415645)); // 'WAVE' in big endian
+  writeHeader(fileHeader.data() + 12, htobe32(0x666d7420)); // 'fmt' in big endian
+  writeHeader(fileHeader.data() + 16, htole32(16)); // PCM header size
 
-    uint32_t bytesPerSample = (audioBlock.getBitsPerSample() + 7) / 8;
-    writeHeader(fileHeader.data() + 20, htole16(format));
-    writeHeader(fileHeader.data() + 22, htole16(audioBlock.getChannelCount()));
-    writeHeader(fileHeader.data() + 24, htole32(audioBlock.getSampleRate()));
-    writeHeader(fileHeader.data() + 28, htole32(audioBlock.getSampleRate() * audioBlock.getChannelCount() * bytesPerSample));
-    writeHeader(fileHeader.data() + 32, htole16(audioBlock.getChannelCount() * bytesPerSample));
-    writeHeader(fileHeader.data() + 34, htole16(audioBlock.getBitsPerSample()));
-    writeHeader(fileHeader.data() + 36, htobe32(0x64617461)); // 'data' in big endian
-    writeHeader(fileHeader.data() + 40, htole32(0)); // Placeholder for data size
+  uint16_t format = 1; // PCM format
+  if (audioBlock.isIEEEFloat()) {
+    format = 3;
+  } else if (audioBlock.getSampleFormat() == AudioSampleFormat::A_LAW) {
+    format = 6;
+  } else if (audioBlock.getSampleFormat() == AudioSampleFormat::MU_LAW) {
+    format = 7;
   }
+
+  uint32_t bytesPerSample = (audioBlock.getBitsPerSample() + 7) / 8;
+  writeHeader(fileHeader.data() + 20, htole16(format));
+  writeHeader(fileHeader.data() + 22, htole16(audioBlock.getChannelCount()));
+  writeHeader(fileHeader.data() + 24, htole32(audioBlock.getSampleRate()));
+  writeHeader(fileHeader.data() + 28, htole32(audioBlock.getSampleRate() * audioBlock.getChannelCount() * bytesPerSample));
+  writeHeader(fileHeader.data() + 32, htole16(audioBlock.getChannelCount() * bytesPerSample));
+  writeHeader(fileHeader.data() + 34, htole16(audioBlock.getBitsPerSample()));
+  writeHeader(fileHeader.data() + 36, htobe32(0x64617461)); // 'data' in big endian
+  writeHeader(fileHeader.data() + 40, htole32(0)); // Placeholder for data size
 
   return outFile.write((char*)fileHeader.data(), fileHeader.size());
 }
@@ -235,8 +230,8 @@ bool ExtendedAudioTrackExtractor::stop(const string& reason) {
   return false;
 }
 
-string extractAudioTrack(vrs::utils::FilteredFileReader& filteredReader, const string& filePath, bool wav64) {
-  const string wavFilePath = filePath + (helpers::endsWith(filePath, wav64 ? ".w64" : ".wav") ? "" : (wav64 ? ".w64" : ".wav"));
+string extractAudioTrack(vrs::utils::FilteredFileReader& filteredReader, const string& filePath) {
+  const string wavFilePath = filePath + (helpers::endsWith(filePath,  ".w64") ? "" : ".w64" );
   const string jsonFilePath = wavFilePath + ".json";
   JDocument doc;
   JsonWrapper json{doc};
@@ -267,7 +262,7 @@ string extractAudioTrack(vrs::utils::FilteredFileReader& filteredReader, const s
               return jDocumentToJsonStringPretty(doc);
           }
           streamId = id;
-          audioExtractor = make_unique<ExtendedAudioTrackExtractor>(wavFilePath, streamId, counter, stop, wav64);
+          audioExtractor = make_unique<ExtendedAudioTrackExtractor>(wavFilePath, streamId, counter, stop);
           filteredReader.reader.setStreamPlayer(id, audioExtractor.get());
       }
   }

@@ -52,7 +52,7 @@ inline void declareVrsAudioToWav(py::module& m) {
           filteredReader.openFile();
           filteredReader.applyFilters({});
           
-          return projectaria::tools::data_provider::extractAudioTrack(filteredReader, wavFilePath, true);
+          return projectaria::tools::data_provider::extractAudioTrack(filteredReader, wavFilePath);
         },
         "Extract the audio stream of a VRS file into a WAV64 file.");
 }

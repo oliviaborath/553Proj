@@ -10,7 +10,7 @@ namespace projectaria::tools::data_provider {
 
 class ExtendedAudioTrackExtractor : public vrs::RecordFormatStreamPlayer {
  public:
-  ExtendedAudioTrackExtractor(const std::string& wavFilePath, vrs::StreamId id, uint32_t& counter, bool wav64, bool& stop);
+  ExtendedAudioTrackExtractor(const std::string& wavFilePath, vrs::StreamId id, uint32_t& counter, bool& stop);
   ~ExtendedAudioTrackExtractor() override;
 
   bool onAudioRead(const vrs::CurrentRecord& record, size_t, const vrs::ContentBlock& audioBlock) override;
@@ -23,7 +23,7 @@ class ExtendedAudioTrackExtractor : public vrs::RecordFormatStreamPlayer {
       double firstImageTime,
       double lastImageTime);
 
-  static int createWavFile(const std::string& wavFilePath, const vrs::AudioContentBlockSpec& audioBlock, vrs::DiskFile& outFile, bool wav64);
+  static int createWavFile(const std::string& wavFilePath, const vrs::AudioContentBlockSpec& audioBlock, vrs::DiskFile& outFile);
   static int writeWavAudioData(vrs::DiskFile& inFile, const vrs::AudioContentBlockSpec& audioBlock, const std::vector<uint8_t>& audio);
   static int closeWavFile(vrs::DiskFile& inFile);
 
@@ -44,7 +44,6 @@ class ExtendedAudioTrackExtractor : public vrs::RecordFormatStreamPlayer {
   uint32_t streamOutputAudioFileCount_ = 0;
   double segmentStartTimestamp_ = 0;
   uint64_t segmentSamplesCount_ = 0;
-  bool wav64_;
 
   // used to track compatibility of successive audio blocks within a stream;
   // if format changes, we close the wav file and start a new one
@@ -83,6 +82,6 @@ class ExtendedAudioTrackExtractor : public vrs::RecordFormatStreamPlayer {
   std::string firstAudioBlockSpec_;
 };
 
-std::string extractAudioTrack(vrs::utils::FilteredFileReader& filteredReader, const std::string& filePath, bool wav64);
+std::string extractAudioTrack(vrs::utils::FilteredFileReader& filteredReader, const std::string& filePath);
 
 } // namespace projectaria::tools::data_provider
