@@ -78,7 +78,8 @@ target_include_directories(utils INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOU
 add_library(vrs_data_provider STATIC
         VrsDataProvider.cpp VrsDataProvider.h
         VrsDataProviderFactory.cpp
-        SensorDataSequence.cpp SensorDataSequence.h)
+        SensorDataSequence.cpp SensorDataSequence.h
+        ExtendedAudioTrackExtractor.cpp ExtendedAudioTrackExtractor.h)
 target_include_directories(vrs_data_provider PUBLIC "../")
 target_link_libraries(vrs_data_provider PUBLIC
         aria_stream_ids
