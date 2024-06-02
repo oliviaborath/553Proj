@@ -32,6 +32,7 @@ tools/samples/python/SAM_eye_gaze_prompt/weights/__MACOSX/._efficient_sam_vits.p
 josiahTest0523.mp4
 projectaria_tools/data/mps_sample/eye_gaze/eyegaze.csv
 projectaria_tools/data/mps_sample/eye_gaze_vergence/generalized_gaze.csv
+JosiahSample0601.mp4
 JosiahSampleRegular0601_001.wav
 JosiahSampleRegular0601_001.wav.json
 JosiahSampleRegular0601_002.wav
@@ -59,6 +60,8 @@ JosiahSampleRegular0601_001.wav
 JosiahSampleRegular0601_001.wav.json
 JosiahSampleRegular0601_002.wav.json
 JosiahSampleRegular0601_002.wav
+JosiahSampleRegular0601.wav
+JosiahSampleRegular0601.wav.json
 JosiahSampleRegular0602_001.wav.json
 JosiahSampleRegular0602_002.wav
 JosiahSampleRegular0602_002.wav.json
@@ -71,3 +74,4 @@ sample.mp4
 JosiahSampleRegular0601.wav.json
 JosiahSampleRegular0601.wav
 JosiahSample0601.mp4
+
